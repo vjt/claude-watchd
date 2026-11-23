@@ -1,0 +1,6 @@
+{
+  "name": "watchd",
+  "version": "0.2.0",
+  "description": "Session-long event watchers for Claude Code with no 30-minute cap: each command's stdout lines wake the session",
+  "license": "MIT"
+}
