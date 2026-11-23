@@ -6,12 +6,13 @@ import type { Register } from 'claude-code'
 // which starts a turn once the session is idle (so it wakes a quiet one).
 //
 // Watches come from <session cwd>/.claude/watchd.json, re-read every POLL_MS:
+// the directory the session started in, pinned, not wherever its shell is now.
 // an added watch starts, a removed one is stopped, a changed one restarts.
 //   { "watches": [
 //       { "name": "irc",    "argv": ["bash", "tools/tail-irc.sh"] },
 //       { "name": "alarms", "command": "tail -n0 -F a.log | grep --line-buffered X" } ] }
-// `command` runs under `bash -c`; `argv` runs as is. Relative paths resolve
-// against the session's working directory. No file, no watches.
+// `command` runs under `bash -c`; `argv` runs as is, both in that same
+// directory, so relative paths resolve there. No file, no watches.
 //
 // A watch that exits is reported and restarted after RESTART_MS. One that
 // exits MAX_FAILS times in a row, each within STABLE_MS of its start, is given
@@ -44,6 +45,12 @@ export const register: Register = on => {
     const result = await next(e)
     if (started) return result
     started = true
+
+    // Pinned at start: the session's working directory moves with a `cd` in
+    // its shell, and a relative config path would then read as missing and
+    // stop every watch.
+    const dir = e.cwd
+    const config = `${dir}/${CONFIG}`
 
     let queue: string[] = []
     let flushing = false
@@ -84,7 +91,6 @@ export const register: Register = on => {
       showStatus()
     }
 
-    const dir = e.cwd
 
     const run = async (w: Watch, entry: Entry) => {
       const argv = w.argv ?? ['bash', '-c', w.command as string]
@@ -95,7 +101,7 @@ export const register: Register = on => {
         let partial = ''
         let how: string
         try {
-          const child = $.process.spawn({ argv, env: { WATCHD: w.name, WATCHD_DIR: dir } })
+          const child = $.process.spawn({ argv, cwd: dir, env: { WATCHD: w.name, WATCHD_DIR: dir } })
           entry.child = child
           for await (const { stream, text } of child) {
             if (stream === 'stderr') {
@@ -129,7 +135,7 @@ export const register: Register = on => {
       if (busy) return
       busy = true
       try {
-        const text = (await $.fs.exists(CONFIG)) ? ((await $.fs.read(CONFIG)) as string) : ''
+        const text = (await $.fs.exists(config)) ? ((await $.fs.read(config)) as string) : ''
         if (text === lastText) return
         lastText = text
         let watches: Watch[] = []
