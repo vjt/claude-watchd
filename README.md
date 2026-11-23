@@ -74,11 +74,13 @@ session is idle.
 
 ## Telling watchd is on
 
-Every child, and everything it forks, carries `WATCHD=<name>` in its
-environment. A startup script that would otherwise attach `Monitor`s can check:
+Every child, and everything it forks, carries `WATCHD=<name>` and
+`WATCHD_DIR=<session working directory>` in its environment. A startup script
+that would otherwise attach `Monitor`s checks for its own project, since other
+sessions' watches carry their own directory:
 
 ```bash
-grep -lsz '^WATCHD=' /proc/[0-9]*/environ | wc -l
+grep -lsxzF "WATCHD_DIR=$PWD" /proc/[0-9]*/environ | wc -l
 ```
 
 ## Caveat

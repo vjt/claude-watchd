@@ -18,9 +18,10 @@ import type { Register } from 'claude-code'
 // up, and that is reported too. The status line reads `watchd up/total`, with
 // the names of the watches that are down.
 //
-// Every child, and everything it forks, carries WATCHD=<name> in its
-// environment, so a script can tell watchd is on:
-//   grep -lsz '^WATCHD=' /proc/[0-9]*/environ
+// Every child, and everything it forks, carries WATCHD=<name> and
+// WATCHD_DIR=<session cwd> in its environment, so a script can tell watchd
+// is on for its project (other sessions' watches carry other dirs):
+//   grep -lsxzF "WATCHD_DIR=$PWD" /proc/[0-9]*/environ
 
 type Watch = { name: string; argv?: string[]; command?: string }
 type Entry = { key: string; stopped: boolean; child?: AsyncGenerator<unknown, unknown> }
@@ -83,6 +84,8 @@ export const register: Register = on => {
       showStatus()
     }
 
+    const dir = e.cwd
+
     const run = async (w: Watch, entry: Entry) => {
       const argv = w.argv ?? ['bash', '-c', w.command as string]
       let fails = 0
@@ -92,7 +95,7 @@ export const register: Register = on => {
         let partial = ''
         let how: string
         try {
-          const child = $.process.spawn({ argv, env: { WATCHD: w.name } })
+          const child = $.process.spawn({ argv, env: { WATCHD: w.name, WATCHD_DIR: dir } })
           entry.child = child
           for await (const { stream, text } of child) {
             if (stream === 'stderr') {
