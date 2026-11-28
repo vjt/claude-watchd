@@ -29,7 +29,8 @@ import type { Hook, Register } from 'claude-code'
 // is on for its project (other sessions' watches carry other dirs):
 //   grep -lsxzF "WATCHD_DIR=$PWD" /proc/[0-9]*/environ
 
-type Watch = { name: string; argv?: string[]; command?: string }
+type Watch = { name: string; argv?: string[]; command?: string; seen?: string[] | string }
+type Held = { name: string; line: string }
 type Entry = { key: string; stopped: boolean; child?: AsyncGenerator<unknown, unknown> }
 
 const CONFIG = '.claude/watchd.json'
@@ -47,10 +48,35 @@ type Dollar = Parameters<Hook<'session.start'>>[0]
 
 // Lines waiting for the model, the main loop's running turn, and whether a
 // submitted prompt has yet to start its turn (so no second one goes out).
-let held: string[] = []
+let held: Held[] = []
 let turn: string | undefined
 let submitted = false
 let timer = false
+// The session's directory, and each watch's `seen` command, from the config.
+let home = ''
+const seenOf = new Map<string, string[]>()
+
+// Takes what is held, as the text the model reads, and runs the `seen`
+// command of each watch with lines in it, those lines on its stdin (no
+// prefix), so a watch can tell its source they reached the model.
+function take($: Dollar): string {
+  const batch = held
+  held = []
+  const byName = new Map<string, string[]>()
+  for (const { name, line } of batch) byName.set(name, [...(byName.get(name) ?? []), line])
+  for (const [name, lines] of byName) {
+    const argv = seenOf.get(name)
+    if (!argv) continue
+    void (async () => {
+      try {
+        for await (const _ of $.process.spawn({ argv, cwd: home, input: lines.join('\n') + '\n' })) { /* drain */ }
+      } catch (err) {
+        $.ui.log(`watchd ${name}: seen failed: ${err}`, { to: 'debug' })
+      }
+    })()
+  }
+  return batch.map(h => `[${h.name}] ${h.line}`).join('\n')
+}
 
 // Idle: submit what is held, one prompt per BATCH_MS. Never awaited, so a
 // prompt the engine keeps queued can not stall the lines behind it.
@@ -61,8 +87,7 @@ function flush($: Dollar) {
     await $.clock.sleep(BATCH_MS)
     timer = false
     if (turn || submitted || !held.length) return
-    const text = held.join('\n')
-    held = []
+    const text = take($)
     submitted = true
     $.prompt.submit({ text })
       .catch(err => $.ui.log(`watchd: submit failed: ${err}`, { to: 'debug' }))
@@ -88,8 +113,7 @@ export const register: Register = on => {
   on('classic.PostToolBatch', async ($, e, next) => {
     const result = await next(e)
     if (e.agent_id !== undefined || !held.length) return result
-    const text = held.join('\n')
-    held = []
+    const text = take($)
     return { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
   })
 
@@ -102,13 +126,14 @@ export const register: Register = on => {
     // its shell, and a relative config path would then read as missing and
     // stop every watch.
     const dir = e.cwd
+    home = dir
     const config = `${dir}/${CONFIG}`
 
     const entries = new Map<string, Entry>()
     const states = new Map<string, 'up' | 'restarting' | 'dead'>()
 
-    const emit = (line: string) => {
-      held.push(line)
+    const emit = (name: string, line: string) => {
+      held.push({ name, line })
       flush($)
     }
 
@@ -145,7 +170,7 @@ export const register: Register = on => {
             }
             const lines = (partial + text).split('\n')
             partial = lines.pop() ?? ''
-            for (const line of lines) if (line.trim()) emit(`[${w.name}] ${line}`)
+            for (const line of lines) if (line.trim()) emit(w.name, line)
           }
           const { code, signal } = await child.result
           how = signal ? `signal ${signal}` : `code ${code}`
@@ -153,11 +178,11 @@ export const register: Register = on => {
           how = `failed: ${err}`
         }
         if (entry.stopped) return
-        if (partial.trim()) emit(`[${w.name}] ${partial}`)
+        if (partial.trim()) emit(w.name, partial)
         fails = (await $.clock.now()) - startedAt > STABLE_MS ? 1 : fails + 1
         const dead = fails >= MAX_FAILS
         setState(w.name, entry, dead ? 'dead' : 'restarting')
-        emit(`[watchd] ${w.name} exited (${how}); ` +
+        emit('watchd', `${w.name} exited (${how}); ` +
           (dead ? `given up after ${fails} quick exits` : `restarting in ${RESTART_MS / 1000}s`))
         if (dead) return
         await $.clock.sleep(RESTART_MS)
@@ -177,13 +202,18 @@ export const register: Register = on => {
         try {
           if (text) watches = JSON.parse(text).watches ?? []
         } catch (err) {
-          emit(`[watchd] ${CONFIG} is not valid JSON, watches left as they were: ${err}`)
+          emit('watchd', `${CONFIG} is not valid JSON, watches left as they were: ${err}`)
           return
         }
         const want = new Map<string, Watch>()
         for (const w of watches) {
           if (isValid(w)) want.set(w.name, w)
-          else emit(`[watchd] ${CONFIG}: skipped invalid watch ${JSON.stringify(w)}`)
+          else emit('watchd', `${CONFIG}: skipped invalid watch ${JSON.stringify(w)}`)
+        }
+        seenOf.clear()
+        for (const [name, w] of want) {
+          if (Array.isArray(w.seen) && w.seen.length) seenOf.set(name, w.seen)
+          else if (typeof w.seen === 'string') seenOf.set(name, ['bash', '-c', w.seen])
         }
         for (const [name, entry] of entries) {
           const w = want.get(name)
@@ -192,7 +222,7 @@ export const register: Register = on => {
           void entry.child?.return(undefined) // kills the child
           entries.delete(name)
           states.delete(name)
-          if (!w) emit(`[watchd] ${name} stopped (removed from ${CONFIG})`)
+          if (!w) emit('watchd', `${name} stopped (removed from ${CONFIG})`)
         }
         for (const [name, w] of want) {
           if (entries.has(name)) continue

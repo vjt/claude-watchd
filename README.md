@@ -64,6 +64,16 @@ tool calls, as hook context (PostToolBatch), without interrupting the turn.
 Whatever is still held when the turn ends is submitted then. A single long tool
 call (a blocking hook, a long foreground command) holds them until it returns.
 
+A watch may name a `seen` command (`argv` list, or a string for `bash -c`): it
+runs whenever that watch's lines are handed to the model, with those lines,
+unprefixed, on its stdin. Use it to tell the source they were read (claude-tgbot
+puts a 👀 on the Telegram messages):
+
+```json
+{ "name": "tg", "command": "tail -F -n0 bot.stdout.log",
+  "seen": ["python3", "/path/to/claude-tgbot/hooks/turn.py", "--seen", "/path/to/consumer"] }
+```
+
 ## Failures
 
 - A watch that exits is reported (`[watchd] bot exited (code 1); restarting in 30s`)
