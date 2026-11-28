@@ -1,6 +1,6 @@
 {
   "name": "watchd",
-  "version": "0.2.0",
-  "description": "Session-long event watchers for Claude Code with no 30-minute cap: each command's stdout lines wake the session",
+  "version": "0.3.0",
+  "description": "Session-long event watchers for Claude Code with no 30-minute cap: stdout lines wake an idle session or get in between tool calls",
   "license": "MIT"
 }

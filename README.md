@@ -2,7 +2,17 @@
 
 A Claude Code mod that keeps event watchers running for the whole life of a
 session. Each watch is a command; every line it prints on stdout reaches the
-model as an event, and wakes the session if it is idle.
+model as an event: it wakes the session when idle, and gets in between tool
+calls when a turn is running.
+
+```mermaid
+graph LR
+    w1[tail -F bot.log] --> watchd
+    w2[alarm script] --> watchd
+    watchd -->|idle: a prompt, starts a turn| model[the model]
+    watchd -->|busy: hook context after each tool batch| model
+    watchd -.->|seen: the lines it delivered, on stdin| ack[ack command]
+```
 
 It replaces the built-in `Monitor` tool for long-running watches. `Monitor`
 caps every watch at 30 minutes, so a session that tails logs all day re-arms
@@ -50,8 +60,8 @@ events sit in a pipe buffer.
 
 ## What the model sees
 
-Lines are batched (200 ms) and submitted as a plugin prompt, one turn per
-batch, prefixed with the watch name:
+On an idle session, lines are batched (200 ms) and submitted as a plugin
+prompt, one turn per batch, prefixed with the watch name:
 
 ```
 [bot] MSG FROM=alice BODY=hello
@@ -80,6 +90,17 @@ puts a 👀 on the Telegram messages):
 last one came and what it said, restarts, whether it has a `seen` command, and
 the command itself; on top, whether a turn runs and how many lines are held.
 
+```
+watchd /home/me/project · turn idle · held 0
+
+🟢 bot up 2h · 41 lines · last 3m ago · 0 restarts · 👀 seen
+tail -F -n0 bot.stdout.log | grep --line-buffered '^MSG '
+↳ MSG 1234 5678 "hello" user=alice
+
+🟡 alarms restarting 12s · 0 lines · last – · 1 restarts
+bash tools/alarms.sh
+```
+
 ## Failures
 
 - A watch that exits is reported (`[watchd] bot exited (code 1); restarting in 30s`)
@@ -102,11 +123,19 @@ sessions' watches carry their own directory:
 grep -lsxzF "WATCHD_DIR=$PWD" /proc/[0-9]*/environ | wc -l
 ```
 
-## Caveat
+## Known gaps
 
-After `/clear` Claude Code does not run `session.start` again. If the watches
-do not outlive a `/clear` on your version, the next session start brings them
-back; the check above tells you which case you are in.
+- **Nothing gets in during a single tool call.** A blocking hook or a long
+  foreground command holds the lines until it returns; the model could not
+  read them before that anyway.
+- **watchd tracks the turn itself.** Claude Code has no call that says whether
+  a turn is running, a plugin prompt starts only once the session is idle, a
+  queued one cannot be taken back, and a session cannot message itself. So
+  watchd follows `turn.start` / `turn.complete`. When the mod reloads (it does
+  only when its files change, at the end of each session's turn), a line that
+  arrives before the new turn's first tool batch can still be queued behind
+  that turn.
+- `/clear` does not run `session.start` again; the watches outlive it.
 
 ## License
 
