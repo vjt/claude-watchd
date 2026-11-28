@@ -101,8 +101,31 @@ function flush($: Dollar) {
   })()
 }
 
+// What /watchd lists: per watch, its command, state and traffic.
+type Info = { cmd: string; state: string; since: number; restarts: number; lines: number; last?: number; lastLine?: string }
+const info = new Map<string, Info>()
+
+const ago = (ms: number) => {
+  const s = Math.round(ms / 1000)
+  return s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`
+}
+
+function report(now: number): string {
+  const out = [`watchd  ${home}  turn: ${turn ? 'running' : 'idle'}  held: ${held.length}`]
+  for (const [name, i] of info) {
+    out.push(`${name}  ${i.state} ${ago(now - i.since)}  lines ${i.lines}` +
+      `  last ${i.last ? ago(now - i.last) + ' ago' : '-'}  restarts ${i.restarts}  seen ${seenOf.has(name) ? 'yes' : 'no'}`)
+    out.push(`  $ ${i.cmd}`)
+    if (i.lastLine) out.push(`  > ${i.lastLine.length > 100 ? i.lastLine.slice(0, 100) + '…' : i.lastLine}`)
+  }
+  if (!info.size) out.push(`no watches (${CONFIG})`)
+  return out.join('\n')
+}
+
 export const register: Register = on => {
   let started = false
+
+  on('command.run', { command: 'watchd' }, async $ => ({ text: report(await $.clock.now()) }))
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) { turn = e.turnId; submitted = false }
@@ -133,6 +156,7 @@ export const register: Register = on => {
     const result = await next(e)
     if (started) return result
     started = true
+    await $.command.register({ name: 'watchd', description: 'List the watches: state, uptime, lines, last line, command' })
 
     // Pinned at start: the session's working directory moves with a `cd` in
     // its shell, and a relative config path would then read as missing and
@@ -160,6 +184,8 @@ export const register: Register = on => {
     const setState = (name: string, entry: Entry, s: 'up' | 'restarting' | 'dead') => {
       if (entries.get(name) !== entry) return
       states.set(name, s)
+      const i = info.get(name)
+      if (i) i.state = s
       showStatus()
     }
 
@@ -169,6 +195,8 @@ export const register: Register = on => {
       let fails = 0
       while (!entry.stopped) {
         const startedAt = await $.clock.now()
+        const i = info.get(w.name)
+        if (i && entries.get(w.name) === entry) i.since = startedAt
         setState(w.name, entry, 'up')
         let partial = ''
         let how: string
@@ -182,7 +210,11 @@ export const register: Register = on => {
             }
             const lines = (partial + text).split('\n')
             partial = lines.pop() ?? ''
-            for (const line of lines) if (line.trim()) emit(w.name, line)
+            for (const line of lines) {
+              if (!line.trim()) continue
+              if (i && entries.get(w.name) === entry) { i.lines++; i.last = await $.clock.now(); i.lastLine = line }
+              emit(w.name, line)
+            }
           }
           const { code, signal } = await child.result
           how = signal ? `signal ${signal}` : `code ${code}`
@@ -193,6 +225,7 @@ export const register: Register = on => {
         if (partial.trim()) emit(w.name, partial)
         fails = (await $.clock.now()) - startedAt > STABLE_MS ? 1 : fails + 1
         const dead = fails >= MAX_FAILS
+        if (i && entries.get(w.name) === entry) i.restarts++
         setState(w.name, entry, dead ? 'dead' : 'restarting')
         emit('watchd', `${w.name} exited (${how}); ` +
           (dead ? `given up after ${fails} quick exits` : `restarting in ${RESTART_MS / 1000}s`))
@@ -234,12 +267,14 @@ export const register: Register = on => {
           void entry.child?.return(undefined) // kills the child
           entries.delete(name)
           states.delete(name)
+          info.delete(name)
           if (!w) emit('watchd', `${name} stopped (removed from ${CONFIG})`)
         }
         for (const [name, w] of want) {
           if (entries.has(name)) continue
           const entry: Entry = { key: keyOf(w), stopped: false }
           entries.set(name, entry)
+          info.set(name, { cmd: w.command ?? (w.argv ?? []).join(' '), state: 'up', since: 0, restarts: 0, lines: 0 })
           void run(w, entry)
         }
         showStatus()

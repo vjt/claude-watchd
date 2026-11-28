@@ -74,6 +74,12 @@ puts a 👀 on the Telegram messages):
   "seen": ["python3", "/path/to/claude-tgbot/hooks/turn.py", "--seen", "/path/to/consumer"] }
 ```
 
+## Listing the watches
+
+`/watchd` lists each watch: state and for how long, lines delivered, when the
+last one came and what it said, restarts, whether it has a `seen` command, and
+the command itself; on top, whether a turn runs and how many lines are held.
+
 ## Failures
 
 - A watch that exits is reported (`[watchd] bot exited (code 1); restarting in 30s`)
