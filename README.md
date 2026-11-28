@@ -35,8 +35,8 @@ claude plugin install watchd --marketplace vjt/claude-watchd
 ```
 
 Then ask the session to watch something (below): it starts listening within
-five seconds. The mod does nothing in a project without that
-file, so it is safe to install everywhere.
+five seconds. The mod does nothing in a project without a
+`.claude/watchd.json`, so it is safe to install everywhere.
 
 **From a checkout**, to hack on it: `claude --plugin-dir /path/to/claude-watchd`
 for one session, or for every session the `env` block of
