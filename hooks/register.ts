@@ -78,20 +78,26 @@ function take($: Dollar): string {
   return batch.map(h => `[${h.name}] ${h.line}`).join('\n')
 }
 
-// Idle: submit what is held, one prompt per BATCH_MS. Never awaited, so a
-// prompt the engine keeps queued can not stall the lines behind it.
+// Submits what is held, unless a prompt of ours is still waiting for its turn.
+// Never awaited, so a prompt the engine keeps queued can not stall the lines
+// behind it.
+function submit($: Dollar) {
+  if (submitted || !held.length) return
+  const text = take($)
+  submitted = true
+  $.prompt.submit({ text })
+    .catch(err => $.ui.log(`watchd: submit failed: ${err}`, { to: 'debug' }))
+    .finally(() => { submitted = false; flush($) })
+}
+
+// Idle: submit what is held, one prompt per BATCH_MS.
 function flush($: Dollar) {
   if (timer) return
   timer = true
   void (async () => {
     await $.clock.sleep(BATCH_MS)
     timer = false
-    if (turn || submitted || !held.length) return
-    const text = take($)
-    submitted = true
-    $.prompt.submit({ text })
-      .catch(err => $.ui.log(`watchd: submit failed: ${err}`, { to: 'debug' }))
-      .finally(() => { submitted = false; flush($) })
+    if (!turn) submit($)
   })()
 }
 
@@ -105,14 +111,20 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId === undefined && turn === e.turnId) { turn = undefined; flush($) }
+    // Submitted here and now, not after a batch delay: the engine may start
+    // its next queued prompt at once, and a prompt sent after that start
+    // waits behind the whole new turn.
+    if (e.agentId === undefined) { turn = undefined; submit($) }
     return result
   })
 
   // Between tool calls of the main loop's turn: what arrived meanwhile goes in.
+  // A batch is also proof a turn runs, for a module loaded after its start.
   on('classic.PostToolBatch', async ($, e, next) => {
     const result = await next(e)
-    if (e.agent_id !== undefined || !held.length) return result
+    if (e.agent_id !== undefined) return result
+    turn ??= 'running'
+    if (!held.length) return result
     const text = take($)
     return { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
   })
