@@ -1,9 +1,14 @@
-import type { Register } from 'claude-code'
+import type { Hook, Register } from 'claude-code'
 
 // watchd: long-lived event watchers for a Claude Code session, with no
 // 30-minute cap. A watch is a command; each line it prints on stdout is an
 // event. Events are batched and handed to the model as a plugin prompt,
 // which starts a turn once the session is idle (so it wakes a quiet one).
+// A plugin prompt only ever lands between turns, so while a main-loop turn
+// runs, events are held and handed to the model after each batch of tool
+// calls instead (PostToolBatch additionalContext); what is left when the turn
+// ends is submitted then. A long single tool call still holds them until it
+// returns: nothing gets in mid-call.
 //
 // Watches come from <session cwd>/.claude/watchd.json, re-read every POLL_MS:
 // the directory the session started in, pinned, not wherever its shell is now.
@@ -38,8 +43,55 @@ const keyOf = (w: Watch) => JSON.stringify([w.argv, w.command])
 const isValid = (w: Watch) => typeof w?.name === 'string' &&
   (Array.isArray(w.argv) ? w.argv.length > 0 : typeof w?.command === 'string')
 
+type Dollar = Parameters<Hook<'session.start'>>[0]
+
+// Lines waiting for the model, the main loop's running turn, and whether a
+// submitted prompt has yet to start its turn (so no second one goes out).
+let held: string[] = []
+let turn: string | undefined
+let submitted = false
+let timer = false
+
+// Idle: submit what is held, one prompt per BATCH_MS. Never awaited, so a
+// prompt the engine keeps queued can not stall the lines behind it.
+function flush($: Dollar) {
+  if (timer) return
+  timer = true
+  void (async () => {
+    await $.clock.sleep(BATCH_MS)
+    timer = false
+    if (turn || submitted || !held.length) return
+    const text = held.join('\n')
+    held = []
+    submitted = true
+    $.prompt.submit({ text })
+      .catch(err => $.ui.log(`watchd: submit failed: ${err}`, { to: 'debug' }))
+      .finally(() => { submitted = false; flush($) })
+  })()
+}
+
 export const register: Register = on => {
   let started = false
+
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) { turn = e.turnId; submitted = false }
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if (e.agentId === undefined && turn === e.turnId) { turn = undefined; flush($) }
+    return result
+  })
+
+  // Between tool calls of the main loop's turn: what arrived meanwhile goes in.
+  on('classic.PostToolBatch', async ($, e, next) => {
+    const result = await next(e)
+    if (e.agent_id !== undefined || !held.length) return result
+    const text = held.join('\n')
+    held = []
+    return { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
+  })
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -52,29 +104,12 @@ export const register: Register = on => {
     const dir = e.cwd
     const config = `${dir}/${CONFIG}`
 
-    let queue: string[] = []
-    let flushing = false
     const entries = new Map<string, Entry>()
     const states = new Map<string, 'up' | 'restarting' | 'dead'>()
 
     const emit = (line: string) => {
-      queue.push(line)
-      if (flushing) return
-      flushing = true
-      void (async () => {
-        try {
-          while (queue.length) {
-            await $.clock.sleep(BATCH_MS)
-            const text = queue.join('\n')
-            queue = []
-            await $.prompt.submit({ text })
-          }
-        } catch (err) {
-          $.ui.log(`watchd: submit failed: ${err}`, { to: 'debug' })
-        } finally {
-          flushing = false
-        }
-      })()
+      held.push(line)
+      flush($)
     }
 
     const showStatus = () => {

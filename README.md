@@ -58,8 +58,11 @@ batch, prefixed with the watch name:
 [alarms] disk 91% on /srv
 ```
 
-Lines that arrive while a turn runs are queued and delivered together once the
-session is idle.
+Claude Code starts a plugin prompt only once the session is idle, so lines that
+arrive while a turn runs are held and handed to the model after each batch of
+tool calls, as hook context (PostToolBatch), without interrupting the turn.
+Whatever is still held when the turn ends is submitted then. A single long tool
+call (a blocking hook, a long foreground command) holds them until it returns.
 
 ## Failures
 
