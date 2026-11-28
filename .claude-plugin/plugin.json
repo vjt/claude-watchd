@@ -2,5 +2,10 @@
   "name": "watchd",
   "version": "0.3.0",
   "description": "Session-long event watchers for Claude Code with no 30-minute cap: stdout lines wake an idle session or get in between tool calls",
-  "license": "MIT"
+  "license": "MIT",
+  "author": {
+    "name": "vjt",
+    "url": "https://github.com/vjt"
+  },
+  "homepage": "https://github.com/vjt/claude-watchd"
 }

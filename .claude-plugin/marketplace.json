@@ -1,0 +1,13 @@
+{
+  "name": "claude-watchd",
+  "description": "watchd: session-long event watchers for Claude Code",
+  "owner": {
+    "name": "vjt"
+  },
+  "plugins": [
+    {
+      "name": "watchd",
+      "source": "./"
+    }
+  ]
+}

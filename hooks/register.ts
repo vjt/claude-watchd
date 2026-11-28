@@ -154,8 +154,13 @@ export const register: Register = on => {
     if (e.agent_id !== undefined) return result
     turn ??= 'running'
     if (!held.length) return result
-    const text = take($)
-    return { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
+    try {
+      const text = take($)
+      return { ...result, additionalContext: [...(result.additionalContext ?? []), text] }
+    } catch (err) {
+      $.ui.log(`watchd: handing lines over failed: ${err}`, { to: 'debug' })
+      return result
+    }
   })
 
   on('session.start', async ($, e, next) => {

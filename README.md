@@ -21,18 +21,30 @@ cap: a watch runs until the session ends, it exits, or you remove it.
 
 ## Install
 
-Point Claude Code at this folder. For every session on the machine, add it to
-the `env` block of `~/.claude/settings.json`:
+At the prompt of a Claude Code session:
+
+```
+/plugin install watchd --marketplace vjt/claude-watchd
+```
+
+Answer `y` to add the marketplace, pick a scope (user: every session from now
+on), and it is active right away. From a shell, the same:
+
+```bash
+claude plugin install watchd --marketplace vjt/claude-watchd
+```
+
+Then drop a `.claude/watchd.json` in a project (below) and the session starts
+listening within five seconds. The mod does nothing in a project without that
+file, so it is safe to install everywhere.
+
+**From a checkout**, to hack on it: `claude --plugin-dir /path/to/claude-watchd`
+for one session, or for every session the `env` block of
+`~/.claude/settings.json`; edits reload at the end of each session's turn.
 
 ```json
 { "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-watchd" } }
 ```
-
-For one session: `claude --plugin-dir /path/to/claude-watchd`. Sessions read
-the variable at start, so restart them once.
-
-The mod does nothing in a project without a config file, so it is safe to load
-everywhere.
 
 ## Configure
 
