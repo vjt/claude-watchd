@@ -1,5 +1,7 @@
 # watchd
 
+![watchd](assets/cover.jpg)
+
 A Claude Code mod that keeps event watchers running for the whole life of a
 session. Each watch is a command; every line it prints on stdout reaches the
 model as an event: it wakes the session when idle, and gets in between tool
