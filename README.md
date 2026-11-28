@@ -34,8 +34,8 @@ on), and it is active right away. From a shell, the same:
 claude plugin install watchd --marketplace vjt/claude-watchd
 ```
 
-Then drop a `.claude/watchd.json` in a project (below) and the session starts
-listening within five seconds. The mod does nothing in a project without that
+Then ask the session to watch something (below): it starts listening within
+five seconds. The mod does nothing in a project without that
 file, so it is safe to install everywhere.
 
 **From a checkout**, to hack on it: `claude --plugin-dir /path/to/claude-watchd`
@@ -48,8 +48,18 @@ for one session, or for every session the `env` block of
 
 ## Configure
 
-Each project lists its watches in `.claude/watchd.json`, under the session's
-working directory:
+Ask for it. The plugin ships a skill, `watchd:watch`, so in any session:
+
+> watch the nginx error log and tell me about 5xx
+>
+> stop watching nginx
+>
+> what are you watching?
+
+Claude writes the entry, tries the command by hand, checks that it started,
+and keeps it quiet, flushed and replay-free (the rules below). The file it
+edits is `.claude/watchd.json`, under the session's working directory, and you
+can of course write it yourself:
 
 ```json
 {
