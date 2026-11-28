@@ -110,22 +110,28 @@ const ago = (ms: number) => {
   return s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`
 }
 
+const DOT: Record<string, string> = { up: '🟢', restarting: '🟡', dead: '🔴' }
+const md = (t: string) => t.replace(/[`*_\\]/g, c => '\\' + c)
+
+// Markdown, as the command's output row draws it.
 function report(now: number): string {
-  const out = [`watchd  ${home}  turn: ${turn ? 'running' : 'idle'}  held: ${held.length}`]
+  // Markdown merges single newlines: a block per watch, hard breaks inside.
+  const blocks = [`**watchd** \`${home}\` · turn **${turn ? 'running' : 'idle'}** · held **${held.length}**`]
   for (const [name, i] of info) {
-    out.push(`${name}  ${i.state} ${ago(now - i.since)}  lines ${i.lines}` +
-      `  last ${i.last ? ago(now - i.last) + ' ago' : '-'}  restarts ${i.restarts}  seen ${seenOf.has(name) ? 'yes' : 'no'}`)
-    out.push(`  $ ${i.cmd}`)
-    if (i.lastLine) out.push(`  > ${i.lastLine.length > 100 ? i.lastLine.slice(0, 100) + '…' : i.lastLine}`)
+    const rows = [`${DOT[i.state] ?? '⚪'} **${name}** ${i.state} ${ago(now - i.since)} · ${i.lines} lines` +
+      ` · last ${i.last ? ago(now - i.last) + ' ago' : '–'} · ${i.restarts} restarts${seenOf.has(name) ? ' · 👀 seen' : ''}`,
+      `\`${i.cmd.replace(/`/g, "'")}\``]
+    if (i.lastLine) rows.push(`↳ _${md(i.lastLine.length > 100 ? i.lastLine.slice(0, 100) + '…' : i.lastLine)}_`)
+    blocks.push(rows.join('  \n'))
   }
-  if (!info.size) out.push(`no watches (${CONFIG})`)
-  return out.join('\n')
+  if (!info.size) blocks.push(`no watches (\`${CONFIG}\`)`)
+  return blocks.join('\n\n')
 }
 
 export const register: Register = on => {
   let started = false
 
-  on('command.run', { command: 'watchd' }, async $ => ({ text: report(await $.clock.now()) }))
+  on('command.run', { command: 'watchd' }, async $ => ({ text: report(await $.clock.now()), isTextDisplayOnly: true }))
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) { turn = e.turnId; submitted = false }
